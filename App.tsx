@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { Search, Zap, BookOpen, AlertCircle, LayoutGrid, RotateCcw, Keyboard as KeyboardIcon, Calendar, ArrowRight, CheckCircle2, MessageSquare, Quote, X as ClearIcon, ZapOff, Timer } from 'lucide-react';
+import { Search, Zap, BookOpen, AlertCircle, LayoutGrid, RotateCcw, Keyboard as KeyboardIcon, Calendar, ArrowRight, CheckCircle2, MessageSquare, Quote, X as ClearIcon, ZapOff, Timer, Settings as SettingsIcon, Cloud } from 'lucide-react';
 import { WordData, SentenceData } from './types';
 import { lookupWord, lookupSentence } from './services/geminiService';
 import { WordCard } from './components/WordCard';
@@ -8,6 +8,7 @@ import { SentenceCard } from './components/SentenceCard';
 import { LoadingSkeleton } from './components/LoadingSkeleton';
 import { FlashcardPage } from './components/FlashcardPage';
 import { StudySession } from './components/StudySession';
+import { DetailModal } from './components/DetailModal';
 
 const App: React.FC = () => {
   const [query, setQuery] = useState('');
@@ -15,11 +16,16 @@ const App: React.FC = () => {
   const [wordData, setWordData] = useState<WordData | null>(null);
   const [sentenceData, setSentenceData] = useState<SentenceData | null>(null);
   const [loading, setLoading] = useState(false);
+  const [isSubLoading, setIsSubLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastLoadTime, setLastLoadTime] = useState<number | null>(null);
   
   const [currentView, setCurrentView] = useState<'search' | 'flashcards' | 'study'>('search');
+  const [sheetsUrl, setSheetsUrl] = useState(() => localStorage.getItem('google_sheets_url') || '');
   
+  const [selectedDetail, setSelectedDetail] = useState<WordData | SentenceData | null>(null);
+  const latestQueryRef = useRef('');
+
   const [savedWords, setSavedWords] = useState<WordData[]>(() => {
     try {
       const saved = localStorage.getItem('flashcards');
@@ -36,7 +42,6 @@ const App: React.FC = () => {
 
   const [studyQueue, setStudyQueue] = useState<any[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
-  // Fix: Use ReturnType<typeof setTimeout> to avoid NodeJS namespace errors in browser environments
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const now = Date.now();
@@ -49,7 +54,6 @@ const App: React.FC = () => {
     }
   }, [currentView, searchMode]);
 
-  // Real-time search effect
   useEffect(() => {
     if (currentView !== 'search' || query.trim().length < 2) {
       if (query.trim().length === 0) {
@@ -59,58 +63,56 @@ const App: React.FC = () => {
       }
       return;
     }
-
-    if (debounceTimerRef.current) {
-      clearTimeout(debounceTimerRef.current);
-    }
-
-    debounceTimerRef.current = setTimeout(() => {
-      handleSearch();
-    }, 500); // 500ms debounce for ultra-fast but stable search
-
-    return () => {
-      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
-    };
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    debounceTimerRef.current = setTimeout(() => handleSearch(), 400);
+    return () => { if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current); };
   }, [query, searchMode, currentView]);
 
-  useEffect(() => {
-    localStorage.setItem('flashcards', JSON.stringify(savedWords));
-  }, [savedWords]);
-
-  useEffect(() => {
-    localStorage.setItem('saved_sentences', JSON.stringify(savedSentences));
-  }, [savedSentences]);
+  useEffect(() => localStorage.setItem('flashcards', JSON.stringify(savedWords)), [savedWords]);
+  useEffect(() => localStorage.setItem('saved_sentences', JSON.stringify(savedSentences)), [savedSentences]);
+  useEffect(() => localStorage.setItem('google_sheets_url', sheetsUrl), [sheetsUrl]);
 
   const handleSearch = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     const cleanQuery = query.trim();
-    if (!cleanQuery || loading) return;
-
-    // Don't re-search if it's the same word already displayed
+    if (!cleanQuery) return;
+    latestQueryRef.current = cleanQuery;
     if (searchMode === 'word' && wordData?.word.toLowerCase() === cleanQuery.toLowerCase()) return;
     if (searchMode === 'sentence' && sentenceData?.sentence.toLowerCase() === cleanQuery.toLowerCase()) return;
-
     const startTime = performance.now();
     setLoading(true);
     setError(null);
-
     try {
       if (searchMode === 'word') {
         const result = await lookupWord(cleanQuery);
-        setWordData(result);
-        setSentenceData(null);
+        if (latestQueryRef.current === cleanQuery) {
+          setWordData(result);
+          setSentenceData(null);
+          setLastLoadTime(Math.round(performance.now() - startTime));
+        }
       } else {
         const result = await lookupSentence(cleanQuery);
-        setSentenceData(result);
-        setWordData(null);
+        if (latestQueryRef.current === cleanQuery) {
+          setSentenceData(result);
+          setWordData(null);
+          setLastLoadTime(Math.round(performance.now() - startTime));
+        }
       }
-      const endTime = performance.now();
-      setLastLoadTime(Math.round(endTime - startTime));
     } catch (err) {
-      setError("Không thể thực hiện tra cứu. Vui lòng thử lại.");
+      if (latestQueryRef.current === cleanQuery) setError("Lỗi tra cứu.");
     } finally {
-      setLoading(false);
+      if (latestQueryRef.current === cleanQuery) setLoading(false);
     }
+  };
+
+  const handleQuickLookup = async (word: string) => {
+    const cleanWord = word.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, "").trim();
+    if (!cleanWord || cleanWord.length < 2) return;
+    setIsSubLoading(true);
+    try {
+      const result = await lookupWord(cleanWord);
+      setSelectedDetail(result);
+    } catch (e) { console.error(e); } finally { setIsSubLoading(false); }
   };
 
   const clearSearch = () => {
@@ -122,134 +124,83 @@ const App: React.FC = () => {
     inputRef.current?.focus();
   };
 
-  const isCurrentWordSaved = wordData ? savedWords.some(w => w.word.toLowerCase() === wordData.word.toLowerCase()) : false;
-  const isCurrentSentenceSaved = sentenceData ? savedSentences.some(s => s.sentence === sentenceData.sentence) : false;
-
-  const handleToggleSaveWord = () => {
-    if (!wordData) return;
-    if (isCurrentWordSaved) {
-      setSavedWords(prev => prev.filter(w => w.word.toLowerCase() !== wordData.word.toLowerCase()));
-    } else {
-      setSavedWords(prev => [{ ...wordData, srs_level: 0, next_review: Date.now() }, ...prev]);
-    }
+  const isItemSaved = (item: WordData | SentenceData | null) => {
+    if (!item) return false;
+    return 'word' in item ? savedWords.some(w => w.word.toLowerCase() === item.word.toLowerCase()) : savedSentences.some(s => s.sentence === item.sentence);
   };
 
-  const handleToggleSaveSentence = () => {
-    if (!sentenceData) return;
-    if (isCurrentSentenceSaved) {
-      setSavedSentences(prev => prev.filter(s => s.sentence !== sentenceData.sentence));
+  const handleToggleSave = (item: WordData | SentenceData | null) => {
+    if (!item) return;
+    const isWord = 'word' in item;
+    if (isWord) {
+      const word = item as WordData;
+      if (isItemSaved(word)) setSavedWords(prev => prev.filter(w => w.word.toLowerCase() !== word.word.toLowerCase()));
+      else setSavedWords(prev => [{ ...word, srs_level: 0, next_review: Date.now() }, ...prev]);
     } else {
-      setSavedSentences(prev => [{ ...sentenceData, srs_level: 0, next_review: Date.now(), date_saved: Date.now() }, ...prev]);
+      const sentence = item as SentenceData;
+      if (isItemSaved(sentence)) setSavedSentences(prev => prev.filter(s => s.sentence !== sentence.sentence));
+      else setSavedSentences(prev => [{ ...sentence, srs_level: 0, next_review: Date.now() }, ...prev]);
     }
-  };
-
-  const handleStartStudy = (type: 'word' | 'sentence' | 'all', mode: 'due' | 'all') => {
-      const nowTs = Date.now();
-      let queue: any[] = [];
-      
-      if (type === 'word' || type === 'all') {
-        const words = mode === 'due' ? savedWords.filter(w => !w.next_review || w.next_review <= nowTs) : savedWords;
-        queue = [...queue, ...words];
-      }
-      
-      if (type === 'sentence' || type === 'all') {
-        const sentences = mode === 'due' ? savedSentences.filter(s => !s.next_review || s.next_review <= nowTs) : savedSentences;
-        queue = [...queue, ...sentences];
-      }
-
-      if (queue.length === 0) return;
-      setStudyQueue(queue.sort(() => Math.random() - 0.5));
-      setCurrentView('study');
   };
 
   return (
-    <div className="min-h-screen bg-gray-950 text-gray-100 flex flex-col font-sans selection:bg-emerald-500/30">
-      <header className="py-4 px-4 border-b border-gray-800 bg-gray-950/80 sticky top-0 z-50 backdrop-blur-md">
-        <div className="max-w-6xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3 cursor-pointer" onClick={() => setCurrentView('search')}>
-            <div className="bg-emerald-500 p-2 rounded-lg text-gray-900 shadow-lg shadow-emerald-500/20"><Zap size={20} strokeWidth={3} /></div>
-            <div className="flex flex-col">
-              <h1 className="text-xl font-bold tracking-tight bg-gradient-to-r from-emerald-400 to-teal-300 bg-clip-text text-transparent hidden sm:block">FlashVocab</h1>
-              <div className="flex items-center gap-1 text-[10px] text-emerald-500 font-black tracking-widest leading-none">
-                <Zap size={10} fill="currentColor" /> TURBO MODE
-              </div>
-            </div>
+    <div className="h-screen bg-gray-950 text-gray-100 flex flex-col font-sans selection:bg-emerald-500/30 overflow-hidden">
+      <header className="py-2 px-3 border-b border-gray-800 bg-gray-950/80 shrink-0 sticky top-0 z-50 backdrop-blur-xl">
+        <div className="max-w-4xl mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-2 cursor-pointer" onClick={() => setCurrentView('search')}>
+            <div className="bg-emerald-500 p-1 rounded-lg text-gray-950 shadow-lg shadow-emerald-500/10"><Zap size={16} strokeWidth={3} /></div>
+            <h1 className="text-sm sm:text-lg font-black tracking-tighter text-white">FlashVocab</h1>
           </div>
-          <nav className="flex items-center gap-1 bg-gray-900/50 p-1 rounded-xl border border-gray-800">
-             <button onClick={() => setCurrentView('search')} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${currentView === 'search' ? 'bg-gray-800 text-white shadow-md' : 'text-gray-400'}`}><Search size={18} /><span className="hidden sm:inline">Tra cứu</span></button>
-             <button onClick={() => setCurrentView('flashcards')} className={`relative flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${currentView === 'flashcards' || currentView === 'study' ? 'bg-gray-800 text-white shadow-md' : 'text-gray-400'}`}>
+          <nav className="flex items-center gap-1">
+             <button onClick={() => setCurrentView('search')} className={`p-2 rounded-lg transition-all ${currentView === 'search' ? 'text-emerald-400 bg-gray-900' : 'text-gray-500'}`}><Search size={18} /></button>
+             <button onClick={() => setCurrentView('flashcards')} className={`relative p-2 rounded-lg transition-all ${currentView === 'flashcards' ? 'text-emerald-400 bg-gray-900' : 'text-gray-500'}`}>
                 <LayoutGrid size={18} />
-                <span className="hidden sm:inline">Kho lưu trữ</span>
-                {(dueWordsCount + dueSentencesCount) > 0 && (
-                  <span className="absolute -top-1 -right-1 flex h-4 w-4">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-4 w-4 bg-red-500 text-[10px] font-black flex items-center justify-center text-white">{dueWordsCount + dueSentencesCount}</span>
-                  </span>
-                )}
+                {(dueWordsCount + dueSentencesCount) > 0 && <span className="absolute top-1 right-1 w-1.5 h-1.5 bg-red-500 rounded-full"></span>}
              </button>
           </nav>
         </div>
       </header>
 
-      <main className="flex-grow container max-w-6xl mx-auto px-4 py-8 flex flex-col items-center">
+      <main className="flex-1 container max-w-4xl mx-auto px-2 py-2 sm:py-4 flex flex-col items-center overflow-y-auto custom-scrollbar">
         {currentView === 'search' && (
-            <div className="w-full flex flex-col items-center animate-in fade-in slide-in-from-bottom-2 duration-500">
-                <div className="w-full max-w-2xl mb-8">
-                    <div className="flex bg-gray-900 p-1 rounded-2xl border border-gray-800 mb-6 w-fit mx-auto">
-                        <button onClick={() => setSearchMode('word')} className={`flex items-center gap-2 px-6 py-2 rounded-xl text-xs font-black transition-all ${searchMode === 'word' ? 'bg-emerald-500 text-gray-950' : 'text-gray-500'}`}><Zap size={14} /> TỪ VỰNG</button>
-                        <button onClick={() => setSearchMode('sentence')} className={`flex items-center gap-2 px-6 py-2 rounded-xl text-xs font-black transition-all ${searchMode === 'sentence' ? 'bg-blue-600 text-white' : 'text-gray-500'}`}><MessageSquare size={14} /> MẪU CÂU</button>
+            <div className="w-full flex flex-col items-center">
+                <div className="w-full max-w-xl mb-3">
+                    <div className="flex bg-gray-900 p-0.5 rounded-lg border border-gray-800 mb-3 w-fit mx-auto shadow-lg scale-90 sm:scale-100">
+                        <button onClick={() => setSearchMode('word')} className={`px-4 py-1 rounded-md text-[10px] font-black transition-all ${searchMode === 'word' ? 'bg-emerald-500 text-gray-950' : 'text-gray-500'}`}>TỪ VỰNG</button>
+                        <button onClick={() => setSearchMode('sentence')} className={`px-4 py-1 rounded-md text-[10px] font-black transition-all ${searchMode === 'sentence' ? 'bg-blue-600 text-white' : 'text-gray-500'}`}>MẪU CÂU</button>
                     </div>
-
-                    <form onSubmit={handleSearch} className="relative group">
-                        <input
-                          ref={inputRef}
-                          type="text"
-                          value={query}
-                          onChange={(e) => setQuery(e.target.value)}
-                          placeholder={searchMode === 'word' ? "Nhập từ (Tự động tra sau 0.5s)..." : "Nhập câu (Tự động tra sau 0.5s)..."}
-                          className="w-full bg-gray-900/50 text-xl text-white placeholder-gray-600 border-2 border-gray-800 rounded-2xl py-4 pl-14 pr-36 shadow-xl focus:outline-none focus:border-emerald-500/50 transition-all"
-                        />
-                        <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-500 group-focus-within:text-emerald-500 transition-colors" size={24} />
-                        
+                    <div className="relative group">
+                        <form onSubmit={handleSearch}>
+                          <input
+                            ref={inputRef}
+                            type="text"
+                            value={query}
+                            onChange={(e) => setQuery(e.target.value)}
+                            placeholder={searchMode === 'word' ? "Tra từ..." : "Tra câu..."}
+                            className="w-full bg-gray-900/40 text-sm sm:text-base text-white border border-gray-800 rounded-xl py-2.5 pl-9 pr-20 focus:outline-none focus:border-emerald-500/40 transition-all shadow-md"
+                          />
+                        </form>
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-600" size={16} />
                         <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
-                          {query && (
-                            <button 
-                              type="button" 
-                              onClick={clearSearch} 
-                              className="p-2 text-gray-500 hover:text-white transition-colors"
-                              title="Xóa nhanh [Esc]"
-                            >
-                              <ClearIcon size={20} />
-                            </button>
-                          )}
-                          <div className="bg-emerald-950/40 px-3 py-2 rounded-xl border border-emerald-500/20 text-[10px] font-black text-emerald-500 flex items-center gap-2">
-                             <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
-                             AUTO-TRA
-                          </div>
+                          {query && <button onClick={clearSearch} className="p-1 text-gray-600 hover:text-white"><ClearIcon size={14} /></button>}
+                          <div className="hidden xs:flex bg-emerald-950/40 px-1.5 py-0.5 rounded border border-emerald-500/20 text-[8px] font-black text-emerald-500 items-center gap-1">AI</div>
                         </div>
-                    </form>
-                    
-                    {lastLoadTime && !loading && (
-                      <div className="mt-4 flex justify-center">
-                        <div className="flex items-center gap-2 bg-gray-900/80 px-3 py-1 rounded-full border border-gray-800 text-[10px] text-gray-400 font-mono animate-in fade-in zoom-in duration-300">
-                          <Timer size={12} className="text-emerald-500" />
-                          <span>Phản hồi: <span className="text-emerald-400 font-bold">{(lastLoadTime / 1000).toFixed(2)}s</span></span>
-                          <span className="text-gray-700">|</span>
-                          <span className="text-emerald-500 font-black tracking-widest">REAL-TIME ACTIVE</span>
-                        </div>
-                      </div>
-                    )}
+                    </div>
                 </div>
 
-                <div className="w-full flex justify-center pb-20">
+                <div className="w-full flex justify-center pb-6">
                     {loading && <LoadingSkeleton />}
-                    {error && <div className="bg-red-900/20 border border-red-500/20 text-red-200 p-6 rounded-2xl flex items-center gap-4 max-w-lg"><AlertCircle size={24} className="text-red-500" /> <p>{error}</p></div>}
-                    {wordData && !loading && searchMode === 'word' && <WordCard data={wordData} isSaved={isCurrentWordSaved} onToggleSave={handleToggleSaveWord} />}
-                    {sentenceData && !loading && searchMode === 'sentence' && <SentenceCard data={sentenceData} isSaved={isCurrentSentenceSaved} onToggleSave={handleToggleSaveSentence} />}
+                    {error && <div className="text-red-400 text-[10px] font-bold bg-red-950/20 px-3 py-1.5 rounded-lg border border-red-900/30">{error}</div>}
+                    {wordData && !loading && searchMode === 'word' && (
+                        <WordCard data={wordData} isSaved={isItemSaved(wordData)} onToggleSave={() => handleToggleSave(wordData)} sheetsUrl={sheetsUrl} onLookup={handleQuickLookup} />
+                    )}
+                    {sentenceData && !loading && searchMode === 'sentence' && (
+                        <SentenceCard data={sentenceData} isSaved={isItemSaved(sentenceData)} onToggleSave={() => handleToggleSave(sentenceData)} sheetsUrl={sheetsUrl} onLookup={handleQuickLookup} />
+                    )}
                     {!loading && !wordData && !sentenceData && !error && (
-                        <div className="text-center text-gray-700 mt-16 opacity-30 select-none">
-                            <Quote size={64} className="mx-auto mb-4" />
-                            <h3 className="text-xl font-bold uppercase tracking-[0.3em]">Gõ để tra ngay lập tức</h3>
+                        <div className="text-center text-gray-800 mt-12 opacity-10 select-none flex flex-col items-center">
+                            <Quote size={40} className="mb-4" />
+                            <h3 className="text-sm font-black uppercase tracking-[0.2em]">Gõ để tra siêu tốc</h3>
                         </div>
                     )}
                 </div>
@@ -257,27 +208,17 @@ const App: React.FC = () => {
         )}
 
         {currentView === 'flashcards' && (
-            <div className="w-full space-y-12">
-              <FlashcardPage 
-                words={savedWords} 
-                sentences={savedSentences}
-                onSelectWord={(w) => { setWordData(w); setSearchMode('word'); setQuery(w.word); setCurrentView('search'); }} 
-                onSelectSentence={(s) => { setSentenceData(s); setSearchMode('sentence'); setQuery(s.sentence); setCurrentView('search'); }}
-                onRemoveWord={(s) => setSavedWords(prev => prev.filter(w => w.word !== s))} 
-                onRemoveSentence={(s) => setSavedSentences(prev => prev.filter(item => item.sentence !== s))}
-                onStartStudy={(type, mode) => handleStartStudy(type, mode)} 
-                onBackToSearch={() => setCurrentView('search')} 
-              />
-            </div>
+            <FlashcardPage words={savedWords} sentences={savedSentences} onSelectWord={setSelectedDetail} onSelectSentence={setSelectedDetail} onRemoveWord={(s) => setSavedWords(prev => prev.filter(w => w.word !== s))} onRemoveSentence={(s) => setSavedSentences(prev => prev.filter(item => item.sentence !== s))} onStartStudy={(type, mode) => { setStudyQueue([...savedWords, ...savedSentences].sort(() => Math.random() - 0.5)); setCurrentView('study'); }} onBackToSearch={() => setCurrentView('search')} sheetsUrl={sheetsUrl} onUpdateSheetsUrl={setSheetsUrl} />
         )}
       </main>
 
+      {selectedDetail && (
+        <DetailModal item={selectedDetail} onClose={() => setSelectedDetail(null)} sheetsUrl={sheetsUrl} isSaved={isItemSaved(selectedDetail)} onToggleSave={() => handleToggleSave(selectedDetail)} onLookup={handleQuickLookup} isLoading={isSubLoading} />
+      )}
+
       {currentView === 'study' && <StudySession words={studyQueue} onComplete={() => setCurrentView('flashcards')} onUpdateWord={(w) => {
-          if ('word' in w) {
-              setSavedWords(prev => prev.map(old => old.word === w.word ? w as WordData : old));
-          } else {
-              setSavedSentences(prev => prev.map(old => old.sentence === w.sentence ? w as SentenceData : old));
-          }
+          if ('word' in w) setSavedWords(prev => prev.map(old => old.word === w.word ? w as WordData : old));
+          else setSavedSentences(prev => prev.map(old => old.sentence === w.sentence ? w as SentenceData : old));
       }} />}
     </div>
   );

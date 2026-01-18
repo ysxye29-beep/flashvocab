@@ -1,8 +1,9 @@
+
 <!DOCTYPE html>
 <html lang="en" class="dark">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>FlashVocab - Instant Dictionary</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -16,29 +17,46 @@
                 850: '#1a202c',
                 950: '#0d1117',
               }
+            },
+            screens: {
+              'xs': '400px',
             }
           }
         }
       }
     </script>
     <style>
+      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+      
       body {
-        background-color: #111827; /* gray-900 */
-        color: #f3f4f6; /* gray-100 */
+        background-color: #0d1117; 
+        color: #f3f4f6; 
+        font-family: 'Inter', sans-serif;
+        -webkit-tap-highlight-color: transparent;
+        overflow-x: hidden;
+        height: 100vh;
+        height: -webkit-fill-available;
       }
-      /* Custom scrollbar for better aesthetics */
-      ::-webkit-scrollbar {
-        width: 8px;
+
+      #root {
+        height: 100%;
       }
-      ::-webkit-scrollbar-track {
-        background: #1f2937; 
+
+      .custom-scrollbar::-webkit-scrollbar {
+        width: 4px;
       }
-      ::-webkit-scrollbar-thumb {
-        background: #4b5563; 
-        border-radius: 4px;
+      .custom-scrollbar::-webkit-scrollbar-track {
+        background: transparent;
       }
-      ::-webkit-scrollbar-thumb:hover {
-        background: #6b7280; 
+      .custom-scrollbar::-webkit-scrollbar-thumb {
+        background: #374151;
+        border-radius: 10px;
+      }
+
+      @media (max-width: 640px) {
+        .card-container {
+          padding-bottom: 80px; /* Space for sticky nav if any */
+        }
       }
     </style>
   <script type="importmap">
@@ -55,6 +73,5 @@
 </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/index.tsx"></script>
   </body>
 </html>

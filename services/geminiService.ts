@@ -7,11 +7,10 @@ const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 const wordCache = new Map<string, WordData>();
 const sentenceCache = new Map<string, SentenceData>();
 
-// Define schema objects directly for responseSchema
 const wordSchema = {
   type: Type.OBJECT,
   properties: {
-    word: { type: Type.STRING, description: "The English word (even if input was Vietnamese)" },
+    word: { type: Type.STRING, description: "The English word (MUST BE EXACTLY SAME as input if input is English)" },
     meaning_vi: { type: Type.STRING, description: "Main Vietnamese meaning" },
     definition_en: { type: Type.STRING, description: "Short, simple English definition (max 15 words)" },
     ipa: { type: Type.STRING },
@@ -22,13 +21,14 @@ const wordSchema = {
     example_vi: { type: Type.STRING },
     example_b2_en: { type: Type.STRING },
     example_b2_vi: { type: Type.STRING },
-    root_word_mnemonic: { type: Type.STRING },
+    root_word: { type: Type.STRING, description: "The origin word or root of the word" },
+    mnemonic: { type: Type.STRING, description: "Memory trick to remember this word" },
     synonyms: { type: Type.ARRAY, items: { type: Type.STRING } },
     antonyms: { type: Type.ARRAY, items: { type: Type.STRING } },
     word_family: { type: Type.ARRAY, items: { type: Type.STRING } },
     collocations: { type: Type.ARRAY, items: { type: Type.STRING } },
   },
-  required: ["word", "meaning_vi", "definition_en", "ipa", "example_en", "example_vi", "root_word_mnemonic"],
+  required: ["word", "meaning_vi", "definition_en", "ipa", "example_en", "example_vi", "root_word", "mnemonic"],
 };
 
 const sentenceSchema = {
@@ -70,15 +70,14 @@ export const lookupWord = async (input: string): Promise<WordData> => {
 
   const response = await ai.models.generateContent({
     model: "gemini-3-flash-preview", 
-    contents: `Input: "${normalized}"`,
+    contents: `Analyze this English/Vietnamese word: "${normalized}"`,
     config: {
-      systemInstruction: `You are an ultra-fast bilingual English-Vietnamese dictionary. 
-      RULES:
-      1. Detect input language automatically.
-      2. If Vietnamese, translate to the most common English word first, then analyze that English word.
-      3. Provide a simple English definition (definition_en) that is easy to understand.
-      4. Output MUST be valid JSON matching the schema.
-      5. PRIORITY: Speed and precision. No chatty text.`,
+      systemInstruction: `You are an ultra-fast bilingual dictionary.
+      STRICT RULES:
+      1. If input is English (e.g. 'raw', 'exit'), DO NOT change it. The "word" field MUST be the same as input.
+      2. If input is Vietnamese, translate to the most precise English word first.
+      3. Split 'root_word' and 'mnemonic' into separate fields.
+      4. Speed is top priority. JSON output only.`,
       responseMimeType: "application/json",
       responseSchema: wordSchema,
       temperature: 0,
@@ -97,12 +96,12 @@ export const lookupSentence = async (input: string): Promise<SentenceData> => {
 
   const response = await ai.models.generateContent({
     model: "gemini-3-flash-preview", 
-    contents: `Sentence/Phrase: "${normalized}"`,
+    contents: `Analyze sentence: "${normalized}"`,
     config: {
       systemInstruction: `Analyze English/Vietnamese sentence. 
-      If Vietnamese, translate to natural English first. 
-      Provide grammar and context in JSON (Vietnamese descriptions). 
-      Extreme speed required.`,
+      If Vietnamese, translate to natural English. 
+      The "sentence" field MUST be the English version. 
+      JSON only.`,
       responseMimeType: "application/json",
       responseSchema: sentenceSchema,
       temperature: 0,
@@ -121,11 +120,11 @@ export const checkPronunciation = async (target: string, base64Audio: string, mi
     contents: {
       parts: [
         { inlineData: { data: base64Audio, mimeType: mimeType } },
-        { text: `Check pronunciation for English: "${target}"` }
+        { text: `Check pronunciation for: "${target}"` }
       ]
     },
     config: {
-      systemInstruction: "Pronunciation coach. Be brief. JSON output. High speed.",
+      systemInstruction: "Pronunciation coach. Be brief. JSON output.",
       responseMimeType: "application/json",
       responseSchema: pronunciationSchema,
       temperature: 0,

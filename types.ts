@@ -11,7 +11,8 @@ export interface WordData {
   example_vi: string;
   example_b2_en: string;
   example_b2_vi: string;
-  root_word_mnemonic: string;
+  root_word: string;
+  mnemonic: string;
   synonyms: string[];
   antonyms: string[];
   word_family: string[];
